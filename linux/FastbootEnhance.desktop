@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Fastboot Enhance
+Comment=Fastboot toolbox and payload dumper
+Exec=FastbootEnhanceLinux
+Icon=FastbootEnhance
+Terminal=false
+Categories=Utility;
+StartupNotify=true
