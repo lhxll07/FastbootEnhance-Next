@@ -1,51 +1,45 @@
-# Fastboot Enhance
+# Fastboot Enhance Next
 
-![A user-friendly **Fastboot ToolBox** & **Payload Dumper** for Windows](screenshots/Banner.png)
+A lightweight Linux port of Fastboot Enhance for fastboot tools, payload images, and dynamic partitions.
 
-<img src="screenshots/ss1.png" width="400" height="300" /> <img src="screenshots/ss2.png" width="400" height="300" />
-<img src="screenshots/ss3.png" width="400" height="300" /> <img src="screenshots/ss4.png" width="400" height="300" />
+## Download
 
-## What can it do?
+Download the latest `FastbootEnhance-Linux-x86_64.AppImage` from [Releases](https://github.com/lhxll07/fastboot-enhance-next/releases).
 
-- Show fastboot vars
-- Switch between fastbootd, bootloader, recovery & system
-- Switch between A & B slot
-- **Flash Payload.bin in fastbootd**
-- Flash images
-- Erase partitions
-- Delete logical partitions
-- Create logical partitions
-- Resize logical partitions
-- Unpack Payload.bin
-- **Extract specific image from Payload.bin**
-- Show Payload vars
-- Show dynamic partition metadata
+The AppImage includes the application, `adb`, and `fastboot`. It does not install files into the system and can be deleted after use.
 
-## Usage
+```sh
+chmod +x FastbootEnhance-Linux-x86_64.AppImage
+./FastbootEnhance-Linux-x86_64.AppImage
+```
 
-- Make sure `.NET Framework 4.5+` is supported
+## Features
 
-- Download `Release.zip` from [Github Releases](https://github.com/xzr467706992/FastbootEnhance/releases)
-- Unzip
-- Click `FastbootEnhance.exe`
+- Fastboot device and variable inspection
+- Image flashing and partition erasing
+- Logical partition create, resize, and delete operations
+- Bootloader, fastbootd, recovery, and system reboot actions
+- A/B slot switching and snapshot update control
+- Payload manifest inspection and dynamic partition metadata
+- Payload partition extraction and flashing
+- Built-in Android platform tools
 
-## Note
+## Build
 
-- Incremental packages are not supported
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/FastbootEnhanceLinux
+```
 
-( I don't have a plan to support it in the future because it is quite useless )
+To build the portable AppImage:
 
-- Still you are able to extract correct image from incremental packages if the checksum passes
+```sh
+./linux/package-appimage.sh
+```
 
-( The checksum will be automatically done if "ignore checksum" is not checked )
+Linux USB access still follows the system's udev rules. On Arch, install `android-udev` if `fastboot devices` cannot see the phone as the current user.
 
-## Building
+The Linux port is distributed under the original MIT license. Android Platform Tools are redistributed with their upstream notices.
 
-- Clone and build it with Visual Studio
-
-## Credits
-
-- [Android Platform Tools](https://developer.android.com/studio/releases/platform-tools)
-- [DotNetZip](https://github.com/haf/DotNetZip.Semverd)
-- [Protobuf](https://github.com/protocolbuffers/protobuf)
-- [XZ.NET](https://github.com/RomanBelkov/XZ.NET)
+The original Windows implementation is preserved as the baseline. See [README-WINDOWS.md](README-WINDOWS.md) for its documentation.
