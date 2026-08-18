@@ -4,7 +4,7 @@ A lightweight Linux port of Fastboot Enhance for fastboot tools, payload images,
 
 ## Download
 
-Download the latest `FastbootEnhance-Linux-x86_64.AppImage` from [Releases](https://github.com/lhxll07/fastboot-enhance-next/releases).
+Download the latest `FastbootEnhance-Linux-x86_64.AppImage` from [Releases](https://github.com/lhxll07/FastbootEnhance-Next/releases).
 
 The AppImage includes the application, `adb`, and `fastboot`. It does not install files into the system and can be deleted after use.
 
