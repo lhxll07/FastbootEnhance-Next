@@ -32,7 +32,7 @@ mkdir -p "${app_path}/Contents/Resources/bin"
 cp -R "${platform_tools}/." "${app_path}/Contents/Resources/bin/"
 chmod +x "${app_path}/Contents/Resources/bin/fastboot" "${app_path}/Contents/Resources/bin/adb"
 
-"${macdeployqt}" "${app_path}" -always-overwrite -no-translations
+"${macdeployqt}" "${app_path}" -always-overwrite
 
 if [[ -n "${runtime_dir}" ]]; then
     mkdir -p "${app_path}/Contents/Frameworks"

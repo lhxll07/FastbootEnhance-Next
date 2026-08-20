@@ -37,11 +37,11 @@ jobs:
           curl -fL --retry 3 -o /tmp/runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
           rm -rf /tmp/platform-tools
           unzip -q /tmp/platform-tools.zip -d /tmp
-          chmod +x /tmp/platform-tools/platform-tools/fastboot /tmp/platform-tools/platform-tools/adb
+          chmod +x /tmp/platform-tools/fastboot /tmp/platform-tools/adb
       - name: Build AppImage
         run: |
           FASTBOOT_ENHANCE_BUILD_DIR="$PWD/build-linux" \
-          FASTBOOT_ENHANCE_PLATFORM_TOOLS=/tmp/platform-tools/platform-tools \
+          FASTBOOT_ENHANCE_PLATFORM_TOOLS=/tmp/platform-tools \
           FASTBOOT_ENHANCE_APPIMAGE_RUNTIME=/tmp/runtime-x86_64 \
           ./packaging/package-linux.sh
       - name: Smoke test AppImage
@@ -58,7 +58,7 @@ jobs:
   windows:
     name: Windows x86_64
     runs-on: windows-2022
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
@@ -110,11 +110,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install dependencies
         run: |
-          brew install qt protobuf xz bzip2 libzip pkg-config ninja dylibbundler
+          brew install qt protobuf abseil xz bzip2 libzip pkg-config ninja dylibbundler
           echo "$(brew --prefix qt)/bin" >> "$GITHUB_PATH"
       - name: Configure and test
         run: |
-          cmake -S . -B build-macos -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix protobuf);$(brew --prefix xz);$(brew --prefix bzip2);$(brew --prefix libzip)"
+          cmake -S . -B build-macos -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_CXX_FLAGS="-I$(brew --prefix abseil)/include" -DCMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix protobuf);$(brew --prefix abseil);$(brew --prefix xz);$(brew --prefix bzip2);$(brew --prefix libzip)"
           cmake --build build-macos --parallel
           ctest --test-dir build-macos --output-on-failure
       - name: Download Android Platform Tools
