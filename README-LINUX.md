@@ -1,23 +1,5 @@
-# Fastboot Enhance Linux
+# Linux packaging
 
-Linux port of Fastboot Enhance. The original Windows source remains in this repository as the baseline.
+Linux is one of the supported targets of the unified Qt/C++ application. Use the project [README](README.md) for build and packaging instructions.
 
-## Build
-
-```sh
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-./build/FastbootEnhanceLinux
-```
-
-## Portable package
-
-```sh
-./linux/package-appimage.sh
-```
-
-The result is `dist/FastbootEnhance-Linux-x86_64.AppImage`. It contains the application and Android platform tools and does not install files into the system.
-
-Linux USB access still follows the system's udev rules. On Arch, `android-udev` is the usual one-time setup if `fastboot devices` cannot see the phone as the current user.
-
-The Linux port is distributed under the original MIT license. Android Platform Tools are redistributed with their upstream notices.
+The portable release is `FastbootEnhance-Linux-x86_64.AppImage`. It contains the application, Qt runtime, and Android Platform Tools and does not install files into the system. Linux USB access may still require a one-time udev rule for the current user.

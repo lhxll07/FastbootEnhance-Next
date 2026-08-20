@@ -133,6 +133,8 @@ _ReSharper*/
 
 # Linux build and packaging outputs
 /build/
+/build-*/
+/CMakeFiles/
 /AppDir/
 /dist/
 /.build-tools/

@@ -1,4 +1,5 @@
 #include "payload.h"
+#include "platform_paths.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -74,10 +75,72 @@ QString operationName(InstallOperation::Type type)
     switch (type) {
     case InstallOperation::REPLACE: return QStringLiteral("REPLACE");
     case InstallOperation::REPLACE_BZ: return QStringLiteral("REPLACE_BZ");
+    case InstallOperation::MOVE: return QStringLiteral("MOVE");
+    case InstallOperation::BSDIFF: return QStringLiteral("BSDIFF");
+    case InstallOperation::SOURCE_COPY: return QStringLiteral("SOURCE_COPY");
+    case InstallOperation::SOURCE_BSDIFF: return QStringLiteral("SOURCE_BSDIFF");
+    case InstallOperation::DISCARD: return QStringLiteral("DISCARD");
     case InstallOperation::REPLACE_XZ: return QStringLiteral("REPLACE_XZ");
+    case InstallOperation::PUFFDIFF: return QStringLiteral("PUFFDIFF");
+    case InstallOperation::BROTLI_BSDIFF: return QStringLiteral("BROTLI_BSDIFF");
+    case InstallOperation::ZUCCHINI: return QStringLiteral("ZUCCHINI");
+    case InstallOperation::LZ4DIFF_BSDIFF: return QStringLiteral("LZ4DIFF_BSDIFF");
+    case InstallOperation::LZ4DIFF_PUFFDIFF: return QStringLiteral("LZ4DIFF_PUFFDIFF");
     case InstallOperation::ZERO: return QStringLiteral("ZERO");
     default: return QString::number(static_cast<int>(type));
     }
+}
+
+struct ExtentRange {
+    quint64 start = 0;
+    quint64 length = 0;
+};
+
+bool collectExtentRanges(const InstallOperation &operation,
+                         quint32 blockSize,
+                         QList<ExtentRange> *ranges,
+                         quint64 *total,
+                         QString *error)
+{
+    if (blockSize == 0) {
+        if (error) *error = QStringLiteral("Payload block 大小无效");
+        return false;
+    }
+
+    ranges->clear();
+    *total = 0;
+    for (const auto &extent : operation.dst_extents()) {
+        if (extent.start_block() > std::numeric_limits<quint64>::max() / blockSize
+            || extent.num_blocks() > std::numeric_limits<quint64>::max() / blockSize) {
+            if (error) *error = QStringLiteral("目标 extent 大小溢出");
+            return false;
+        }
+        const quint64 start = extent.start_block() * blockSize;
+        const quint64 length = extent.num_blocks() * blockSize;
+        if (start > std::numeric_limits<quint64>::max() - length
+            || *total > std::numeric_limits<quint64>::max() - length
+            || start > static_cast<quint64>(std::numeric_limits<qint64>::max())
+            || length > static_cast<quint64>(std::numeric_limits<qint64>::max())) {
+            if (error) *error = QStringLiteral("目标 extent 超出文件大小限制");
+            return false;
+        }
+        ranges->append({start, length});
+        *total += length;
+    }
+    return true;
+}
+
+bool isDataReplacement(InstallOperation::Type type)
+{
+    return type == InstallOperation::REPLACE
+        || type == InstallOperation::REPLACE_BZ
+        || type == InstallOperation::REPLACE_XZ;
+}
+
+bool isSupportedOperation(InstallOperation::Type type)
+{
+    return isDataReplacement(type)
+        || type == InstallOperation::ZERO;
 }
 
 }
@@ -134,7 +197,8 @@ bool PayloadReader::openPayload(QString *error)
             return false;
         }
 
-        m_tempFile = std::make_unique<QTemporaryFile>(QDir::tempPath() + QStringLiteral("/fastboot-enhance-XXXXXX"));
+        m_tempFile = std::make_unique<QTemporaryFile>(
+            PlatformPaths::temporaryDirectoryPattern(QStringLiteral("payload")));
         m_tempFile->setAutoRemove(true);
         if (!m_tempFile->open()) {
             zip_fclose(entry);
@@ -198,7 +262,8 @@ bool PayloadReader::readExact(qint64 size, QByteArray *result, QString *error) c
 
 bool PayloadReader::readAt(quint64 offset, quint64 size, QByteArray *result, QString *error) const
 {
-    if (size > static_cast<quint64>(std::numeric_limits<int>::max())) {
+    if (offset > static_cast<quint64>(std::numeric_limits<qint64>::max())
+        || size > static_cast<quint64>(std::numeric_limits<int>::max())) {
         if (error)
             *error = QStringLiteral("payload 数据块过大");
         return false;
@@ -264,8 +329,26 @@ bool PayloadReader::load(QString *error)
         m_metadataSignature = base64(metadata.signatures(0).data());
 
     m_dataStart = static_cast<quint64>(m_file.pos());
-    m_dataSize = m_manifest.signatures_offset();
-    if (m_manifest.signatures_offset() > 0 && m_manifest.signatures_size() > 0) {
+    const quint64 fileSize = static_cast<quint64>(m_file.size());
+    if (m_dataStart > fileSize) {
+        if (error) *error = QStringLiteral("payload 数据起始位置无效");
+        return false;
+    }
+    if (m_manifest.has_signatures_offset()) {
+        if (m_manifest.signatures_offset() > fileSize - m_dataStart) {
+            if (error) *error = QStringLiteral("payload 签名位置超出文件范围");
+            return false;
+        }
+        m_dataSize = m_manifest.signatures_offset();
+    } else {
+        m_dataSize = fileSize - m_dataStart;
+    }
+    if (m_manifest.has_signatures_size() && m_manifest.signatures_size() > 0) {
+        if (!m_manifest.has_signatures_offset()
+            || m_manifest.signatures_size() > fileSize - m_dataStart - m_manifest.signatures_offset()) {
+            if (error) *error = QStringLiteral("payload 签名范围超出文件范围");
+            return false;
+        }
         QByteArray payloadSignatureBytes;
         if (!readAt(m_dataStart + m_manifest.signatures_offset(), m_manifest.signatures_size(),
                     &payloadSignatureBytes, error))
@@ -340,6 +423,21 @@ QStringList PayloadReader::imageInfo() const
     if (info.has_version()) result.append(QStringLiteral("version: ") + QString::fromStdString(info.version()));
     if (info.has_build_channel()) result.append(QStringLiteral("build_channel: ") + QString::fromStdString(info.build_channel()));
     if (info.has_build_version()) result.append(QStringLiteral("build_version: ") + QString::fromStdString(info.build_version()));
+    return result;
+}
+
+QStringList PayloadReader::unsupportedOperations(const QString &partitionName) const
+{
+    QStringList result;
+    for (const PartitionUpdate &partition : m_manifest.partitions()) {
+        const QString name = QString::fromStdString(partition.partition_name());
+        if (!partitionName.isEmpty() && name != partitionName)
+            continue;
+        for (const InstallOperation &operation : partition.operations()) {
+            if (!isSupportedOperation(operation.type()))
+                result.append(name + QStringLiteral(": ") + operationName(operation.type()));
+        }
+    }
     return result;
 }
 
@@ -438,6 +536,11 @@ bool PayloadReader::extract(const QString &partitionName,
                             QString *error,
                             const Progress &progress) const
 {
+    if (!QRegularExpression(QStringLiteral("^[A-Za-z0-9._+-]+$")).match(partitionName).hasMatch()) {
+        if (error) *error = QStringLiteral("目标分区名包含非法字符");
+        return false;
+    }
+
     const PartitionUpdate *target = nullptr;
     for (const PartitionUpdate &partition : m_manifest.partitions()) {
         if (QString::fromStdString(partition.partition_name()) == partitionName) {
@@ -461,9 +564,16 @@ bool PayloadReader::extract(const QString &partitionName,
         return false;
     }
 
-    if (target->has_new_partition_info() && target->new_partition_info().has_size()
-        && target->new_partition_info().size() <= static_cast<quint64>(std::numeric_limits<qint64>::max())) {
-        if (!output.resize(static_cast<qint64>(target->new_partition_info().size()))) {
+    quint64 expectedSize = 0;
+    bool hasExpectedSize = false;
+    if (target->has_new_partition_info() && target->new_partition_info().has_size()) {
+        expectedSize = target->new_partition_info().size();
+        hasExpectedSize = true;
+        if (expectedSize > static_cast<quint64>(std::numeric_limits<qint64>::max())) {
+            if (error) *error = QStringLiteral("目标分区大小超出文件大小限制");
+            return false;
+        }
+        if (!output.resize(static_cast<qint64>(expectedSize))) {
             if (error) *error = output.errorString();
             return false;
         }
@@ -478,44 +588,25 @@ bool PayloadReader::extract(const QString &partitionName,
             if (error) *error = QStringLiteral("操作没有目标 extent");
             return false;
         }
-        if (operation.dst_extents_size() > 1) {
-            if (error) *error = QStringLiteral("单个操作包含多个目标 extent");
+
+        QList<ExtentRange> ranges;
+        quint64 dstLength = 0;
+        if (!collectExtentRanges(operation, m_manifest.block_size(), &ranges, &dstLength, error))
+            return false;
+        if (operation.has_dst_length() && operation.dst_length() != dstLength) {
+            if (error) *error = QStringLiteral("目标 extent 总大小与操作声明不一致");
             return false;
         }
-
-        const auto &extent = operation.dst_extents(0);
-        const quint64 dstStart = extent.start_block() * m_manifest.block_size();
-        const quint64 dstLength = extent.num_blocks() * m_manifest.block_size();
-        QByteArray data;
-        if (operation.has_data_offset() && operation.has_data_length()
-            && !readAt(m_dataStart + operation.data_offset(), operation.data_length(), &data, error))
-            return false;
-
-        if (!ignoreChecks && operation.has_data_sha256_hash()) {
-            QCryptographicHash hash(QCryptographicHash::Sha256);
-            hash.addData(data);
-            if (hash.result() != QByteArray::fromStdString(operation.data_sha256_hash())) {
-                if (error) *error = QStringLiteral("操作数据 SHA-256 校验失败");
-                return false;
+        if (hasExpectedSize) {
+            for (const ExtentRange &range : ranges) {
+                if (range.start > expectedSize || range.length > expectedSize - range.start) {
+                    if (error) *error = QStringLiteral("目标 extent 超出分区大小");
+                    return false;
+                }
             }
         }
 
-        QByteArray decoded;
-        switch (operation.type()) {
-        case InstallOperation::REPLACE:
-            decoded = data;
-            break;
-        case InstallOperation::REPLACE_BZ:
-            if (!decompressBzip(data, &decoded, error)) return false;
-            break;
-        case InstallOperation::REPLACE_XZ:
-            if (!decompressXz(data, &decoded, error)) return false;
-            break;
-        case InstallOperation::ZERO:
-            if (!output.seek(static_cast<qint64>(dstStart)) || !writeZeros(&output, dstLength, error))
-                return false;
-            continue;
-        default:
+        if (!isSupportedOperation(operation.type())) {
             if (!ignoreUnknown) {
                 if (error) *error = QStringLiteral("不支持的操作类型：") + operationName(operation.type());
                 return false;
@@ -523,21 +614,87 @@ bool PayloadReader::extract(const QString &partitionName,
             continue;
         }
 
-        if (!ignoreChecks && decoded.size() != static_cast<qint64>(dstLength)) {
-            if (error) *error = QStringLiteral("解压后的数据大小与目标 extent 不一致");
-            return false;
+        QByteArray data;
+        if (isDataReplacement(operation.type())) {
+            if (!operation.has_data_offset() || !operation.has_data_length()) {
+                if (error) *error = QStringLiteral("数据替换操作缺少数据范围");
+                return false;
+            }
+            if (operation.data_offset() > m_dataSize
+                || operation.data_length() > m_dataSize - operation.data_offset()
+                || m_dataStart > std::numeric_limits<quint64>::max() - operation.data_offset()) {
+                if (error) *error = QStringLiteral("操作数据范围超出 payload 数据区");
+                return false;
+            }
+            if (!readAt(m_dataStart + operation.data_offset(), operation.data_length(), &data, error))
+                return false;
+
+            if (!ignoreChecks && operation.has_data_sha256_hash()) {
+                QCryptographicHash hash(QCryptographicHash::Sha256);
+                hash.addData(data);
+                if (hash.result() != QByteArray::fromStdString(operation.data_sha256_hash())) {
+                    if (error) *error = QStringLiteral("操作数据 SHA-256 校验失败");
+                    return false;
+                }
+            }
+
+            QByteArray decoded;
+            switch (operation.type()) {
+            case InstallOperation::REPLACE:
+                decoded = data;
+                break;
+            case InstallOperation::REPLACE_BZ:
+                if (!decompressBzip(data, &decoded, error)) return false;
+                break;
+            case InstallOperation::REPLACE_XZ:
+                if (!decompressXz(data, &decoded, error)) return false;
+                break;
+            default:
+                if (error) *error = QStringLiteral("内部错误：未知的数据替换操作");
+                return false;
+            }
+
+            if (!ignoreChecks && static_cast<quint64>(decoded.size()) != dstLength) {
+                if (error) *error = QStringLiteral("解压后的数据大小与目标 extent 不一致");
+                return false;
+            }
+            if (static_cast<quint64>(decoded.size()) > dstLength) {
+                if (error) *error = QStringLiteral("镜像数据超过目标 extent");
+                return false;
+            }
+
+            quint64 decodedOffset = 0;
+            for (const ExtentRange &range : ranges) {
+                if (decodedOffset >= static_cast<quint64>(decoded.size()))
+                    break;
+                const quint64 amount = std::min(range.length,
+                                                static_cast<quint64>(decoded.size()) - decodedOffset);
+                if (amount == 0)
+                    continue;
+                if (!writeAt(&output, range.start,
+                             decoded.mid(static_cast<int>(decodedOffset), static_cast<int>(amount)), error))
+                    return false;
+                decodedOffset += amount;
+            }
+            continue;
         }
-        if (decoded.size() > static_cast<qint64>(dstLength)) {
-            if (error) *error = QStringLiteral("镜像数据超过目标 extent");
-            return false;
+
+        if (operation.type() == InstallOperation::ZERO) {
+            for (const ExtentRange &range : ranges) {
+                if (!output.seek(static_cast<qint64>(range.start))
+                    || !writeZeros(&output, range.length, error))
+                    return false;
+            }
         }
-        if (!writeAt(&output, dstStart, decoded, error))
-            return false;
     }
 
     output.close();
     if (!ignoreChecks && target->has_new_partition_info()) {
         if (target->new_partition_info().has_size()) {
+            if (target->new_partition_info().size() > static_cast<quint64>(std::numeric_limits<qint64>::max())) {
+                if (error) *error = QStringLiteral("最终镜像大小超出文件大小限制");
+                return false;
+            }
             const qint64 expectedSize = static_cast<qint64>(target->new_partition_info().size());
             if (QFileInfo(outputPath).size() != expectedSize) {
                 if (error) *error = QStringLiteral("最终镜像大小校验失败");

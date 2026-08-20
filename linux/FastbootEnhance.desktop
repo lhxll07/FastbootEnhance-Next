@@ -2,7 +2,7 @@
 Type=Application
 Name=Fastboot Enhance
 Comment=Fastboot toolbox and payload dumper
-Exec=FastbootEnhanceLinux
+Exec=FastbootEnhance
 Icon=FastbootEnhance
 Terminal=false
 Categories=Utility;

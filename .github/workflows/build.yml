@@ -1,0 +1,170 @@
+name: Build Fastboot Enhance
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: fastboot-enhance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config qt6-base-dev libprotobuf-dev protobuf-compiler liblzma-dev libbz2-dev libzip-dev curl unzip
+      - name: Configure and test
+        run: |
+          cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          cmake --build build-linux --parallel
+          ctest --test-dir build-linux --output-on-failure
+      - name: Download Android Platform Tools
+        run: |
+          curl -fL --retry 3 -o /tmp/platform-tools.zip https://dl.google.com/android/repository/platform-tools_r37.0.1-linux.zip
+          echo 'd230f13842f60f782a8645f9c813f8f845bf36089ea7289f28c48f17979313f1  /tmp/platform-tools.zip' | sha256sum --check
+          curl -fL --retry 3 -o /tmp/runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+          rm -rf /tmp/platform-tools
+          unzip -q /tmp/platform-tools.zip -d /tmp
+          chmod +x /tmp/platform-tools/platform-tools/fastboot /tmp/platform-tools/platform-tools/adb
+      - name: Build AppImage
+        run: |
+          FASTBOOT_ENHANCE_BUILD_DIR="$PWD/build-linux" \
+          FASTBOOT_ENHANCE_PLATFORM_TOOLS=/tmp/platform-tools/platform-tools \
+          FASTBOOT_ENHANCE_APPIMAGE_RUNTIME=/tmp/runtime-x86_64 \
+          ./packaging/package-linux.sh
+      - name: Smoke test AppImage
+        run: |
+          test -x dist/FastbootEnhance-Linux-x86_64.AppImage
+          env APPIMAGE_EXTRACT_AND_RUN=1 dist/FastbootEnhance-Linux-x86_64.AppImage --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FastbootEnhance-Linux-x86_64
+          path: dist/FastbootEnhance-Linux-x86_64.AppImage
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Windows x86_64
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          $env:VCPKG_DEFAULT_TRIPLET = "x64-windows"
+          vcpkg install --triplet x64-windows --clean-after-build
+          "${env:VCPKG_INSTALLATION_ROOT}\installed\x64-windows\tools\Qt6\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "C:\Program Files\7-Zip" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Configure and test
+        shell: pwsh
+        run: |
+          cmake -S . -B build-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_TOOLCHAIN_FILE="${env:VCPKG_INSTALLATION_ROOT}\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows
+          cmake --build build-windows --parallel
+          ctest --test-dir build-windows --output-on-failure
+      - name: Download Android Platform Tools
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://dl.google.com/android/repository/platform-tools_r37.0.1-win.zip -OutFile platform-tools.zip
+          if ((Get-FileHash platform-tools.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne "45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99") { throw "Platform Tools checksum mismatch" }
+          if (Test-Path platform-tools) { Remove-Item platform-tools -Recurse -Force }
+          Expand-Archive platform-tools.zip -DestinationPath .
+      - name: Build single-file EXE
+        shell: pwsh
+        run: |
+          $env:FASTBOOT_ENHANCE_PLATFORM_TOOLS = "${{ github.workspace }}\platform-tools"
+          $env:FASTBOOT_ENHANCE_RUNTIME_DIR = "${env:VCPKG_INSTALLATION_ROOT}\installed\x64-windows\bin"
+          .\packaging\package-windows.ps1 -BuildDir "${{ github.workspace }}\build-windows"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FastbootEnhance-Windows-x86_64
+          path: dist/FastbootEnhance-Windows-x86_64.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-14
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          brew install qt protobuf xz bzip2 libzip pkg-config ninja dylibbundler
+          echo "$(brew --prefix qt)/bin" >> "$GITHUB_PATH"
+      - name: Configure and test
+        run: |
+          cmake -S . -B build-macos -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix protobuf);$(brew --prefix xz);$(brew --prefix bzip2);$(brew --prefix libzip)"
+          cmake --build build-macos --parallel
+          ctest --test-dir build-macos --output-on-failure
+      - name: Download Android Platform Tools
+        run: |
+          curl -fL --retry 3 -o platform-tools.zip https://dl.google.com/android/repository/platform-tools_r37.0.1-darwin.zip
+          echo 'ee39ad5967e95c2a07f04dbcbde96b1a0c916ba376096db5d2f498b7727a5d1d  platform-tools.zip' | shasum -a 256 -c
+          rm -rf platform-tools
+          unzip -q platform-tools.zip
+          chmod +x platform-tools/fastboot platform-tools/adb
+      - name: Build DMG
+        run: |
+          FASTBOOT_ENHANCE_BUILD_DIR="$PWD/build-macos" \
+          FASTBOOT_ENHANCE_PLATFORM_TOOLS="$PWD/platform-tools" \
+          FASTBOOT_ENHANCE_OUTPUT="$PWD/dist/FastbootEnhance-macOS-${{ matrix.arch }}.dmg" \
+          ./packaging/package-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FastbootEnhance-macOS-${{ matrix.arch }}
+          path: dist/FastbootEnhance-macOS-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release version
+        run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '\r\n' < VERSION)"
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Verify release artifacts
+        run: |
+          test -f release-assets/FastbootEnhance-Linux-x86_64.AppImage
+          test -f release-assets/FastbootEnhance-Windows-x86_64.exe
+          test -f release-assets/FastbootEnhance-macOS-x86_64.dmg
+          test -f release-assets/FastbootEnhance-macOS-arm64.dmg
+      - name: Generate checksums
+        run: |
+          find release-assets -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > release-assets/SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true

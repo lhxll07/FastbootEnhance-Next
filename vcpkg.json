@@ -1,0 +1,11 @@
+{
+  "name": "fastboot-enhance",
+  "version-string": "0.2.0",
+  "dependencies": [
+    "qtbase",
+    "protobuf",
+    "liblzma",
+    "bzip2",
+    "libzip"
+  ]
+}

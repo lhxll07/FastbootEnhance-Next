@@ -34,10 +34,12 @@ public:
     quint64 payloadSignatureSize() const { return m_payloadSignatureSize; }
     QString metadataSignature() const { return m_metadataSignature; }
     QString payloadSignature() const { return m_payloadSignature; }
+    bool isIncremental() const { return m_manifest.minor_version() != 0; }
 
     QList<PayloadPartitionRow> partitions() const;
     QStringList dynamicMetadata() const;
     QStringList imageInfo() const;
+    QStringList unsupportedOperations(const QString &partitionName = {}) const;
 
     bool extract(const QString &partitionName,
                  const QString &outputDirectory,
