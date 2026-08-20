@@ -14,13 +14,17 @@ if (-not $PlatformTools) { $PlatformTools = $env:FASTBOOT_ENHANCE_PLATFORM_TOOLS
 if (-not $RuntimeDir) { $RuntimeDir = $env:FASTBOOT_ENHANCE_RUNTIME_DIR }
 if (-not $Output) { $Output = Join-Path $projectRoot "dist\FastbootEnhance-Windows-x86_64.exe" }
 
-$binary = Join-Path $BuildDir "FastbootEnhance.exe"
+$binaryCandidates = @(
+    (Join-Path $BuildDir "FastbootEnhance.exe"),
+    (Join-Path $BuildDir "Release\FastbootEnhance.exe")
+)
+$binary = $binaryCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 $stage = Join-Path $projectRoot "dist\windows-stage"
 $archive = Join-Path $projectRoot "dist\FastbootEnhance-Windows-x86_64.7z"
 $configPath = Join-Path $projectRoot "dist\FastbootEnhance-Windows-sfx.txt"
 
-if (-not (Test-Path $binary)) {
-    throw "Build output not found: $binary"
+if (-not $binary) {
+    throw "Build output not found. Checked: $($binaryCandidates -join ', ')"
 }
 if (-not $PlatformTools -or -not (Test-Path (Join-Path $PlatformTools "fastboot.exe"))
     -or -not (Test-Path (Join-Path $PlatformTools "adb.exe"))) {
